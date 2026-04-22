@@ -4,23 +4,32 @@ import webbrowser
 import urllib.request
 import urllib.error
 
-PORT       = 8000
-CELESTRAK  = 'https://celestrak.org/SATCAT/elements.php'
+PORT = 8000
 
-PROXIES = {
+# Prefix-based proxies: /prefix/rest → upstream + rest
+PREFIX_PROXIES = {
     '/api/': ('https://api.adsb.lol/', 'application/json'),
+}
+
+# Exact-path proxies: /path → upstream url
+EXACT_PROXIES = {
+    '/satnogs': ('https://db.satnogs.org/api/tle/?format=json', 'application/json'),
 }
 
 class Handler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
-        for prefix, (upstream, ctype) in PROXIES.items():
+        path = self.path.split('?')[0]  # strip query string for matching
+
+        if path in EXACT_PROXIES:
+            url, ctype = EXACT_PROXIES[path]
+            self._proxy(url, ctype)
+            return
+
+        for prefix, (upstream, ctype) in PREFIX_PROXIES.items():
             if self.path.startswith(prefix):
                 self._proxy(upstream + self.path[len(prefix):], ctype)
                 return
-        if self.path.startswith('/tle/'):
-            group = self.path[5:].split('?')[0]
-            self._proxy(f'{CELESTRAK}?GROUP={group}&FORMAT=TLE', 'text/plain')
-            return
+
         super().do_GET()
 
     def _proxy(self, url, content_type):
@@ -41,7 +50,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
 
     def log_message(self, fmt, *args):
-        if not any(self.path.startswith(p) for p in ('/api/', '/tle/')):
+        proxy_paths = tuple(EXACT_PROXIES) + tuple(PREFIX_PROXIES)
+        if not any(self.path.startswith(p) for p in proxy_paths):
             super().log_message(fmt, *args)
 
 Handler.extensions_map['.js'] = 'application/javascript'

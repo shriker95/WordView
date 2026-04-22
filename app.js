@@ -210,18 +210,26 @@ map.on('moveend', () => {
 // =============================================================
 
 const SAT_COLOR = {
-  station:  '#ffd700',
-  military: '#ff4444',
-  weather:  '#00e5ff',
-  other:    '#aaaaaa',
+  station:    '#ffd700',
+  military:   '#ff4444',
+  weather:    '#00e5ff',
+  navigation: '#88ff44',
 };
 
-// CelesTrak group → classification
-const TLE_GROUPS = [
-  { group: 'stations', type: 'station'  },
-  { group: 'military', type: 'military' },
-  { group: 'weather',  type: 'weather'  },
+// Name-pattern classification (SatNOGS doesn't provide category tags)
+const SAT_PATTERNS = [
+  { type: 'station',    re: /\b(ISS|CSS|TIANGONG|TIANHE|ZARYA|ZVEZDA|UNITY|NAUKA|HUBBLE|HST)\b/i },
+  { type: 'military',   re: /^(USA-|COSMOS-2[3-9]\d\d|COSMOS-2[0-2]\d\d [A-Z]|YAOGAN-|WGS-|MUOS-|AEHF-|MILSTAR|LACROSSE|ONYX|TRUMPET|MENTOR|NOSS)/i },
+  { type: 'weather',    re: /^(NOAA[ -]\d|GOES[ -]\d|METEOSAT-|HIMAWARI-|FENGYUN|FY-\d|METEOR-M|ELEKTRO-|SUOMI|JPSS-|DMSP|EUMETSAT)/i },
+  { type: 'navigation', re: /^(GPS\s+(IIF|IIR|III|BIIR|BIIF|BIII)|GLONASS-M|GLONASS-K|GALILEO|BEIDOU|COMPASS-|NAVSTAR|QZSS|IRNSS)/i },
 ];
+
+function classifySatellite(name) {
+  for (const { type, re } of SAT_PATTERNS) {
+    if (re.test(name)) return type;
+  }
+  return null; // skip unclassified to avoid clutter
+}
 
 function makeSatIcon(type) {
   const c = SAT_COLOR[type];
@@ -237,24 +245,6 @@ function makeSatIcon(type) {
       <circle cx="10" cy="0" r="1.2" fill="${c}"/>
     </svg>`,
   });
-}
-
-function parseTLEs(text) {
-  const lines = text.trim().split('\n').map(l => l.trim()).filter(Boolean);
-  const sats = [];
-  let i = 0;
-  while (i < lines.length) {
-    if (lines[i][0] === '1' || lines[i][0] === '2') { i++; continue; }
-    const name = lines[i];
-    const l1   = lines[i + 1];
-    const l2   = lines[i + 2];
-    if (!l1 || !l2 || l1[0] !== '1' || l2[0] !== '2') { i++; continue; }
-    try {
-      sats.push({ name: name.trim(), satrec: satellite.twoline2satrec(l1, l2) });
-    } catch {}
-    i += 3;
-  }
-  return sats;
 }
 
 function getSatPos(satrec) {
@@ -277,56 +267,56 @@ function getSatPos(satrec) {
 const satGroup   = L.layerGroup().addTo(map);
 const satMarkers = new Map();
 let satEnabled   = true;
-let tleCache     = []; // [{ type, sats: [{name, satrec}] }]
+let tleCache     = []; // [{ name, type, satrec }]
 
 async function loadTLEs() {
-  const results = await Promise.all(
-    TLE_GROUPS.map(async ({ group, type }) => {
+  try {
+    const res = await fetch('/satnogs');
+    if (!res.ok) return;
+    const data = await res.json();
+    tleCache = data.flatMap(({ tle0: name, tle1, tle2 }) => {
+      const type = classifySatellite(name);
+      if (!type) return [];
       try {
-        const res = await fetch(`/tle/${group}`);
-        if (!res.ok) return { type, sats: [] };
-        return { type, sats: parseTLEs(await res.text()) };
-      } catch {
-        return { type, sats: [] };
-      }
-    })
-  );
-  tleCache = results;
-  renderSatellites();
+        return [{ name: name.trim(), type, satrec: satellite.twoline2satrec(tle1, tle2) }];
+      } catch { return []; }
+    });
+    renderSatellites();
+  } catch (err) {
+    console.warn('TLE fetch error:', err);
+  }
 }
 
 function renderSatellites() {
   if (!satEnabled) return;
 
   const seen   = new Set();
-  const counts = { station: 0, military: 0, weather: 0 };
+  const counts = { station: 0, military: 0, weather: 0, navigation: 0 };
 
-  for (const { type, sats } of tleCache) {
-    for (const { name, satrec } of sats) {
-      const pos = getSatPos(satrec);
-      if (!pos) continue;
+  for (const { name, type, satrec } of tleCache) {
+    const pos = getSatPos(satrec);
+    if (!pos) continue;
 
-      counts[type] = (counts[type] ?? 0) + 1;
-      seen.add(name);
+    counts[type]++;
+    seen.add(name);
 
-      const popup = `<div class="plane-popup">
-        <b>${name}</b>
-        <span class="plane-type-badge" style="background:${SAT_COLOR[type]}">${type}</span>
-        <div>Altitude: ${pos.alt.toLocaleString()} km</div>
-        <div>Position: ${pos.lat.toFixed(2)}°, ${pos.lon.toFixed(2)}°</div>
-      </div>`;
+    const popup = `<div class="plane-popup">
+      <b>${name}</b>
+      <span class="plane-type-badge" style="background:${SAT_COLOR[type]}">${type}</span>
+      <div>Altitude: ${pos.alt.toLocaleString()} km</div>
+      <div>Position: ${pos.lat.toFixed(2)}°, ${pos.lon.toFixed(2)}°</div>
+    </div>`;
 
-      const icon = makeSatIcon(type);
+    const icon = makeSatIcon(type);
 
-      if (satMarkers.has(name)) {
-        const m = satMarkers.get(name);
-        m.setLatLng([pos.lat, pos.lon]);
-        m.setIcon(icon);
-        if (m.isPopupOpen()) m.setPopupContent(popup);
-        else m.bindPopup(popup);
-      } else {
-        satMarkers.set(name, L.marker([pos.lat, pos.lon], { icon }).bindPopup(popup).addTo(satGroup));
-      }
+    if (satMarkers.has(name)) {
+      const m = satMarkers.get(name);
+      m.setLatLng([pos.lat, pos.lon]);
+      m.setIcon(icon);
+      if (m.isPopupOpen()) m.setPopupContent(popup);
+      else m.bindPopup(popup);
+    } else {
+      satMarkers.set(name, L.marker([pos.lat, pos.lon], { icon }).bindPopup(popup).addTo(satGroup));
     }
   }
 
@@ -341,9 +331,10 @@ function updateSatCounter(counts) {
   const el = document.getElementById('sat-counter');
   if (!counts) { el.innerHTML = ''; return; }
   el.innerHTML = `
-    <span style="color:${SAT_COLOR.station}" title="Space stations">&#128752; ${counts.station}</span>
-    <span style="color:${SAT_COLOR.military}" title="Military">&#128752; ${counts.military} mil</span>
-    <span style="color:${SAT_COLOR.weather}"  title="Weather">&#128752; ${counts.weather} wth</span>
+    <span style="color:${SAT_COLOR.station}"    title="Space stations">&#128752; ${counts.station}</span>
+    <span style="color:${SAT_COLOR.military}"   title="Military">&#128752; ${counts.military} mil</span>
+    <span style="color:${SAT_COLOR.weather}"    title="Weather">&#128752; ${counts.weather} wth</span>
+    <span style="color:${SAT_COLOR.navigation}" title="Navigation">&#128752; ${counts.navigation} nav</span>
   `;
 }
 
@@ -361,5 +352,5 @@ document.getElementById('btn-satellites').addEventListener('click', function () 
 });
 
 loadTLEs();
-setInterval(renderSatellites, 30 * 1000);          // move markers every 30s
-setInterval(loadTLEs, 2 * 60 * 60 * 1000);         // refresh TLEs every 2h
+setInterval(renderSatellites, 30 * 1000);       // update positions every 30s
+setInterval(loadTLEs, 2 * 60 * 60 * 1000);      // re-fetch TLEs every 2h
