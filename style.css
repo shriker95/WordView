@@ -122,6 +122,23 @@ header {
   margin-top: 4px;
 }
 
+.popup-links {
+  margin-top: 7px;
+  padding-top: 6px;
+  border-top: 1px solid #2e3147;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.popup-links a {
+  color: #7c9cff;
+  font-size: 0.74rem;
+  text-decoration: none;
+}
+
+.popup-links a:hover { text-decoration: underline; }
+
 /* API key modal */
 .modal {
   position: fixed;

@@ -104,7 +104,14 @@ function formatSpd(kts) {
 
 function buildPopup(hex, callsign, altFt, speedKts, heading, squawk, type) {
   const label = (callsign || hex).trim();
+  const cs    = callsign?.trim();
   const badge = `<span class="plane-type-badge" style="background:${TYPE_COLOR[type]}">${type}</span>`;
+  const links = `<div class="popup-links">
+    ${cs ? `<a href="https://flightaware.com/live/flight/${cs}" target="_blank" rel="noopener">FlightAware</a>` : ''}
+    ${cs ? `<a href="https://www.flightradar24.com/${cs}" target="_blank" rel="noopener">FR24</a>` : ''}
+    <a href="https://www.planespotters.net/hex/${hex}" target="_blank" rel="noopener">Planespotters</a>
+    <a href="https://opensky-network.org/aircraft-profile?icao24=${hex}" target="_blank" rel="noopener">OpenSky</a>
+  </div>`;
   return `<div class="plane-popup">
     <b>${label}</b>
     ${badge}
@@ -113,6 +120,7 @@ function buildPopup(hex, callsign, altFt, speedKts, heading, squawk, type) {
     <div>Heading: ${heading != null ? Math.round(heading) + '°' : '—'}</div>
     ${squawk ? `<div>Squawk: ${squawk}</div>` : ''}
     <div class="detail">ICAO24: ${hex}</div>
+    ${links}
   </div>`;
 }
 
@@ -290,11 +298,10 @@ async function loadTLEs() {
     const res = await fetch('/satnogs');
     if (!res.ok) return;
     const data = await res.json();
-    tleCache = data.flatMap(({ tle0: name, tle1, tle2 }) => {
+    tleCache = data.flatMap(({ tle0: name, tle1, tle2, norad_cat_id }) => {
       const type = classifySatellite(name);
-      if (!type) return [];
       try {
-        return [{ name: name.trim(), type, satrec: satellite.twoline2satrec(tle1, tle2) }];
+        return [{ name: name.trim(), type, satrec: satellite.twoline2satrec(tle1, tle2), noradId: norad_cat_id }];
       } catch { return []; }
     });
     renderSatellites();
@@ -309,18 +316,25 @@ function renderSatellites() {
   const seen   = new Set();
   const counts = { station: 0, military: 0, weather: 0, navigation: 0, other: 0 };
 
-  for (const { name, type, satrec } of tleCache) {
+  for (const { name, type, satrec, noradId } of tleCache) {
     const pos = getSatPos(satrec);
     if (!pos) continue;
 
     counts[type]++;
     seen.add(name);
 
+    const links = noradId ? `<div class="popup-links">
+      <a href="https://www.n2yo.com/satellite/?s=${noradId}" target="_blank" rel="noopener">N2YO</a>
+      <a href="https://heavens-above.com/satinfo.aspx?satid=${noradId}" target="_blank" rel="noopener">Heavens-Above</a>
+      <a href="https://db.satnogs.org/satellite/${noradId}/" target="_blank" rel="noopener">SatNOGS</a>
+    </div>` : '';
     const popup = `<div class="plane-popup">
       <b>${name}</b>
       <span class="plane-type-badge" style="background:${SAT_COLOR[type]}">${type}</span>
       <div>Altitude: ${pos.alt.toLocaleString()} km</div>
       <div>Position: ${pos.lat.toFixed(2)}°, ${pos.lon.toFixed(2)}°</div>
+      ${noradId ? `<div class="detail">NORAD ID: ${noradId}</div>` : ''}
+      ${links}
     </div>`;
 
     const icon = makeSatIcon(type);
@@ -416,6 +430,11 @@ function makeShipIcon(heading, type) {
 function buildShipPopup(mmsi, name, typeCode, sog, heading, dest) {
   const type  = getShipType(typeCode);
   const badge = `<span class="plane-type-badge" style="background:${SHIP_COLOR[type]}">${type}</span>`;
+  const links = `<div class="popup-links">
+    <a href="https://www.marinetraffic.com/en/ais/details/ships/mmsi:${mmsi}" target="_blank" rel="noopener">MarineTraffic</a>
+    <a href="https://www.vesselfinder.com/vessels/details/${mmsi}" target="_blank" rel="noopener">VesselFinder</a>
+    <a href="https://www.myshiptracking.com/?mmsi=${mmsi}" target="_blank" rel="noopener">MyShipTracking</a>
+  </div>`;
   return `<div class="plane-popup">
     <b>${name || 'MMSI ' + mmsi}</b>
     ${badge}
@@ -424,6 +443,7 @@ function buildShipPopup(mmsi, name, typeCode, sog, heading, dest) {
     <div>Heading: ${heading && heading !== 511 ? heading + '°' : '—'}</div>
     ${dest ? `<div>Destination: ${dest}</div>` : ''}
     ${typeCode ? `<div class="detail">AIS type: ${typeCode}</div>` : ''}
+    ${links}
   </div>`;
 }
 
