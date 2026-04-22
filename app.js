@@ -214,25 +214,41 @@ const SAT_COLOR = {
   military:   '#ff4444',
   weather:    '#00e5ff',
   navigation: '#88ff44',
+  other:      '#556677',
 };
 
-// Name-pattern classification (SatNOGS doesn't provide category tags)
 const SAT_PATTERNS = [
-  { type: 'station',    re: /\b(ISS|CSS|TIANGONG|TIANHE|ZARYA|ZVEZDA|UNITY|NAUKA|HUBBLE|HST)\b/i },
-  { type: 'military',   re: /^(USA-|COSMOS-2[3-9]\d\d|COSMOS-2[0-2]\d\d [A-Z]|YAOGAN-|WGS-|MUOS-|AEHF-|MILSTAR|LACROSSE|ONYX|TRUMPET|MENTOR|NOSS)/i },
-  { type: 'weather',    re: /^(NOAA[ -]\d|GOES[ -]\d|METEOSAT-|HIMAWARI-|FENGYUN|FY-\d|METEOR-M|ELEKTRO-|SUOMI|JPSS-|DMSP|EUMETSAT)/i },
-  { type: 'navigation', re: /^(GPS\s+(IIF|IIR|III|BIIR|BIIF|BIII)|GLONASS-M|GLONASS-K|GALILEO|BEIDOU|COMPASS-|NAVSTAR|QZSS|IRNSS)/i },
+  { type: 'station', re: /\b(ISS|CSS|TIANGONG|TIANHE|ZARYA|ZVEZDA|UNITY|NAUKA|HUBBLE|HST|MIR\b|SALYUT)/i },
+
+  { type: 'military', re:
+      /^(USA-|NROL-|NRO-|YAOGAN-|JIANBING-|SHIJIAN-1[5-9]|SHIJIAN-2\d|WGS-|MUOS-|AEHF-|MILSTAR|LACROSSE|ONYX|TRUMPET|MENTOR|NOSS|DSP-|SBIRS|UFO-|DSCS|SKYNET|SICRAL|SYRACUSE|XTAR|SPAINSAT|X-37|OTV-)/i },
+
+  { type: 'weather', re:
+      /^(NOAA[ -]|GOES[ -]|GOES-|METEOSAT-|METOP-|HIMAWARI-|FENGYUN|FY-|METEOR-M|ELEKTRO-|SUOMI|JPSS-|DMSP[ -]|TIROS|ESSA-|ITOS |NIMBUS|SEASAT|LANDSAT|AQUA|TERRA\b|AURA\b|CALIPSO|CLOUDSAT|SENTINEL-|SPOT[ -]|ENVISAT|ERS-|RADARSAT|COSMO-|KOMPSAT|PLEIADES|WORLDVIEW|GEOEYE|IKONOS)/i },
+
+  { type: 'navigation', re:
+      /^(GPS |NAVSTAR|GLONASS|GALILEO|GSAT-0|BEIDOU|COMPASS-|QZSS|IRNSS|SBAS|WAAS|EGNOS|MSAS|GAGAN|SDCM)/i },
 ];
 
 function classifySatellite(name) {
   for (const { type, re } of SAT_PATTERNS) {
     if (re.test(name)) return type;
   }
-  return null; // skip unclassified to avoid clutter
+  return 'other';
 }
 
 function makeSatIcon(type) {
   const c = SAT_COLOR[type];
+  if (type === 'other') {
+    return L.divIcon({
+      className: '',
+      iconSize: [6, 6],
+      iconAnchor: [3, 3],
+      html: `<svg xmlns="http://www.w3.org/2000/svg" width="6" height="6" viewBox="0 0 6 6">
+        <circle cx="3" cy="3" r="2.5" fill="${c}" opacity="0.7"/>
+      </svg>`,
+    });
+  }
   return L.divIcon({
     className: '',
     iconSize: [20, 14],
@@ -291,7 +307,7 @@ function renderSatellites() {
   if (!satEnabled) return;
 
   const seen   = new Set();
-  const counts = { station: 0, military: 0, weather: 0, navigation: 0 };
+  const counts = { station: 0, military: 0, weather: 0, navigation: 0, other: 0 };
 
   for (const { name, type, satrec } of tleCache) {
     const pos = getSatPos(satrec);
@@ -335,6 +351,7 @@ function updateSatCounter(counts) {
     <span style="color:${SAT_COLOR.military}"   title="Military">&#128752; ${counts.military} mil</span>
     <span style="color:${SAT_COLOR.weather}"    title="Weather">&#128752; ${counts.weather} wth</span>
     <span style="color:${SAT_COLOR.navigation}" title="Navigation">&#128752; ${counts.navigation} nav</span>
+    <span style="color:${SAT_COLOR.other}"      title="Other">&#128752; ${counts.other}</span>
   `;
 }
 
