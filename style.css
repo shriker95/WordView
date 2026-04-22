@@ -74,18 +74,33 @@ header {
   color: #4caf50;
 }
 
-#plane-counter {
+.sat-btn.active {
+  background: #2a2510;
+  border-color: #ffd700;
+  color: #ffd700;
+}
+
+#overlay-counters {
   display: flex;
-  gap: 10px;
-  font-size: 0.72rem;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
   flex-shrink: 0;
 }
 
-#plane-counter span {
+#plane-counter,
+#sat-counter {
+  display: flex;
+  gap: 10px;
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+}
+
+#plane-counter span,
+#sat-counter span {
   display: flex;
   align-items: center;
   gap: 3px;
-  font-variant-numeric: tabular-nums;
 }
 
 #map {

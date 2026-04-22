@@ -203,3 +203,163 @@ map.on('moveend', () => {
   clearTimeout(fetchTimer);
   fetchTimer = setTimeout(refreshPlanes, 400); // debounce rapid panning
 });
+
+// =============================================================
+// Satellite overlay — TLE data from CelesTrak, propagated with
+// satellite.js to get real-time positions.
+// =============================================================
+
+const SAT_COLOR = {
+  station:  '#ffd700',
+  military: '#ff4444',
+  weather:  '#00e5ff',
+  other:    '#aaaaaa',
+};
+
+// CelesTrak group → classification
+const TLE_GROUPS = [
+  { group: 'stations', type: 'station'  },
+  { group: 'military', type: 'military' },
+  { group: 'weather',  type: 'weather'  },
+];
+
+function makeSatIcon(type) {
+  const c = SAT_COLOR[type];
+  return L.divIcon({
+    className: '',
+    iconSize: [20, 14],
+    iconAnchor: [10, 7],
+    html: `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="14" viewBox="0 0 20 14">
+      <rect x="0"  y="5" width="6" height="4" fill="${c}" rx="0.5" opacity="0.9"/>
+      <rect x="14" y="5" width="6" height="4" fill="${c}" rx="0.5" opacity="0.9"/>
+      <rect x="7"  y="2" width="6" height="10" fill="${c}" rx="1"/>
+      <line x1="10" y1="0" x2="10" y2="2" stroke="${c}" stroke-width="1.5"/>
+      <circle cx="10" cy="0" r="1.2" fill="${c}"/>
+    </svg>`,
+  });
+}
+
+function parseTLEs(text) {
+  const lines = text.trim().split('\n').map(l => l.trim()).filter(Boolean);
+  const sats = [];
+  let i = 0;
+  while (i < lines.length) {
+    if (lines[i][0] === '1' || lines[i][0] === '2') { i++; continue; }
+    const name = lines[i];
+    const l1   = lines[i + 1];
+    const l2   = lines[i + 2];
+    if (!l1 || !l2 || l1[0] !== '1' || l2[0] !== '2') { i++; continue; }
+    try {
+      sats.push({ name: name.trim(), satrec: satellite.twoline2satrec(l1, l2) });
+    } catch {}
+    i += 3;
+  }
+  return sats;
+}
+
+function getSatPos(satrec) {
+  try {
+    const now = new Date();
+    const pv  = satellite.propagate(satrec, now);
+    if (!pv.position || typeof pv.position !== 'object') return null;
+    const gmst = satellite.gstime(now);
+    const gd   = satellite.eciToGeodetic(pv.position, gmst);
+    return {
+      lat: satellite.degreesLat(gd.latitude),
+      lon: satellite.degreesLong(gd.longitude),
+      alt: Math.round(gd.height),
+    };
+  } catch {
+    return null;
+  }
+}
+
+const satGroup   = L.layerGroup().addTo(map);
+const satMarkers = new Map();
+let satEnabled   = true;
+let tleCache     = []; // [{ type, sats: [{name, satrec}] }]
+
+async function loadTLEs() {
+  const results = await Promise.all(
+    TLE_GROUPS.map(async ({ group, type }) => {
+      try {
+        const res = await fetch(`/tle/${group}`);
+        if (!res.ok) return { type, sats: [] };
+        return { type, sats: parseTLEs(await res.text()) };
+      } catch {
+        return { type, sats: [] };
+      }
+    })
+  );
+  tleCache = results;
+  renderSatellites();
+}
+
+function renderSatellites() {
+  if (!satEnabled) return;
+
+  const seen   = new Set();
+  const counts = { station: 0, military: 0, weather: 0 };
+
+  for (const { type, sats } of tleCache) {
+    for (const { name, satrec } of sats) {
+      const pos = getSatPos(satrec);
+      if (!pos) continue;
+
+      counts[type] = (counts[type] ?? 0) + 1;
+      seen.add(name);
+
+      const popup = `<div class="plane-popup">
+        <b>${name}</b>
+        <span class="plane-type-badge" style="background:${SAT_COLOR[type]}">${type}</span>
+        <div>Altitude: ${pos.alt.toLocaleString()} km</div>
+        <div>Position: ${pos.lat.toFixed(2)}°, ${pos.lon.toFixed(2)}°</div>
+      </div>`;
+
+      const icon = makeSatIcon(type);
+
+      if (satMarkers.has(name)) {
+        const m = satMarkers.get(name);
+        m.setLatLng([pos.lat, pos.lon]);
+        m.setIcon(icon);
+        if (m.isPopupOpen()) m.setPopupContent(popup);
+        else m.bindPopup(popup);
+      } else {
+        satMarkers.set(name, L.marker([pos.lat, pos.lon], { icon }).bindPopup(popup).addTo(satGroup));
+      }
+    }
+  }
+
+  for (const [name, m] of satMarkers) {
+    if (!seen.has(name)) { satGroup.removeLayer(m); satMarkers.delete(name); }
+  }
+
+  updateSatCounter(counts);
+}
+
+function updateSatCounter(counts) {
+  const el = document.getElementById('sat-counter');
+  if (!counts) { el.innerHTML = ''; return; }
+  el.innerHTML = `
+    <span style="color:${SAT_COLOR.station}" title="Space stations">&#128752; ${counts.station}</span>
+    <span style="color:${SAT_COLOR.military}" title="Military">&#128752; ${counts.military} mil</span>
+    <span style="color:${SAT_COLOR.weather}"  title="Weather">&#128752; ${counts.weather} wth</span>
+  `;
+}
+
+document.getElementById('btn-satellites').addEventListener('click', function () {
+  satEnabled = !satEnabled;
+  this.classList.toggle('active', satEnabled);
+  if (satEnabled) {
+    satGroup.addTo(map);
+    if (tleCache.length === 0) loadTLEs();
+    else renderSatellites();
+  } else {
+    map.removeLayer(satGroup);
+    updateSatCounter(null);
+  }
+});
+
+loadTLEs();
+setInterval(renderSatellites, 30 * 1000);          // move markers every 30s
+setInterval(loadTLEs, 2 * 60 * 60 * 1000);         // refresh TLEs every 2h

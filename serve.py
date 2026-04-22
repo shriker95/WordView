@@ -4,24 +4,32 @@ import webbrowser
 import urllib.request
 import urllib.error
 
-PORT = 8000
-PROXY_PREFIX = '/api/'
-UPSTREAM     = 'https://api.adsb.lol/'
+PORT       = 8000
+CELESTRAK  = 'https://celestrak.org/SATCAT/elements.php'
+
+PROXIES = {
+    '/api/': ('https://api.adsb.lol/', 'application/json'),
+}
 
 class Handler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
-        if self.path.startswith(PROXY_PREFIX):
-            self._proxy(UPSTREAM + self.path[len(PROXY_PREFIX):])
-        else:
-            super().do_GET()
+        for prefix, (upstream, ctype) in PROXIES.items():
+            if self.path.startswith(prefix):
+                self._proxy(upstream + self.path[len(prefix):], ctype)
+                return
+        if self.path.startswith('/tle/'):
+            group = self.path[5:].split('?')[0]
+            self._proxy(f'{CELESTRAK}?GROUP={group}&FORMAT=TLE', 'text/plain')
+            return
+        super().do_GET()
 
-    def _proxy(self, url):
+    def _proxy(self, url, content_type):
         try:
             req = urllib.request.Request(url, headers={'User-Agent': 'WorldView/1.0'})
-            with urllib.request.urlopen(req, timeout=10) as r:
+            with urllib.request.urlopen(req, timeout=15) as r:
                 data = r.read()
             self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Type', content_type)
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
             self.wfile.write(data)
@@ -33,7 +41,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
 
     def log_message(self, fmt, *args):
-        if not self.path.startswith(PROXY_PREFIX):
+        if not any(self.path.startswith(p) for p in ('/api/', '/tle/')):
             super().log_message(fmt, *args)
 
 Handler.extensions_map['.js'] = 'application/javascript'
