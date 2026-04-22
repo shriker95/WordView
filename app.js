@@ -91,28 +91,28 @@ function makePlaneIcon(heading, type) {
   });
 }
 
-function formatAlt(meters) {
-  if (meters == null) return '—';
-  return `${Math.round(meters).toLocaleString()} m / ${Math.round(meters * 3.281).toLocaleString()} ft`;
+// adsb.lol gives altitude in feet, speed in knots
+function formatAlt(ft) {
+  if (ft == null || ft === 'ground') return ft === 'ground' ? 'Ground' : '—';
+  return `${Math.round(ft).toLocaleString()} ft / ${Math.round(ft * 0.3048).toLocaleString()} m`;
 }
 
-function formatSpd(ms) {
-  if (ms == null) return '—';
-  return `${Math.round(ms * 1.944)} kts / ${Math.round(ms * 3.6)} km/h`;
+function formatSpd(kts) {
+  if (kts == null) return '—';
+  return `${Math.round(kts)} kts / ${Math.round(kts * 1.852)} km/h`;
 }
 
-function buildPopup(icao24, callsign, country, baroAlt, velocity, heading, squawk, type) {
-  const label = (callsign || icao24).trim();
+function buildPopup(hex, callsign, altFt, speedKts, heading, squawk, type) {
+  const label = (callsign || hex).trim();
   const badge = `<span class="plane-type-badge" style="background:${TYPE_COLOR[type]}">${type}</span>`;
   return `<div class="plane-popup">
     <b>${label}</b>
     ${badge}
-    <div>Country: ${country}</div>
-    <div>Altitude: ${formatAlt(baroAlt)}</div>
-    <div>Speed: ${formatSpd(velocity)}</div>
+    <div>Altitude: ${formatAlt(altFt)}</div>
+    <div>Speed: ${formatSpd(speedKts)}</div>
     <div>Heading: ${heading != null ? Math.round(heading) + '°' : '—'}</div>
     ${squawk ? `<div>Squawk: ${squawk}</div>` : ''}
-    <div class="detail">ICAO24: ${icao24}</div>
+    <div class="detail">ICAO24: ${hex}</div>
   </div>`;
 }
 
@@ -125,53 +125,47 @@ let fetchTimer = null;
 
 async function refreshPlanes() {
   if (!planesEnabled) return;
-  if (map.getZoom() < 2) {
-    updateCounter(null);
-    return;
-  }
+  if (map.getZoom() < 2) { updateCounter(null); return; }
 
   try {
-    const b = map.getBounds();
-    const url = `https://opensky-network.org/api/states/all` +
-      `?lamin=${b.getSouth().toFixed(2)}&lomin=${b.getWest().toFixed(2)}` +
-      `&lamax=${b.getNorth().toFixed(2)}&lomax=${b.getEast().toFixed(2)}`;
+    const center = map.getCenter();
+    const corner = map.getBounds().getNorthEast();
+    // Radius from center to corner in nautical miles, capped at 500
+    const radiusNm = Math.min(500, Math.round(map.distance(center, corner) / 1852));
 
+    // adsb.lol — open CORS, no key needed, altitude in ft, speed in kts
+    const url = `https://api.adsb.lol/v2/lat/${center.lat.toFixed(4)}/lon/${center.lng.toFixed(4)}/dist/${radiusNm}`;
     const res = await fetch(url);
     if (!res.ok) return;
-    const { states = [] } = await res.json();
+    const { ac: aircraft = [] } = await res.json();
 
     const seen = new Set();
     const counts = { military: 0, government: 0, civilian: 0 };
 
-    for (const s of states) {
-      const [icao24, callsign, country, , , lon, lat, baroAlt, onGround, velocity, heading, , , , squawk] = s;
-      if (lat == null || lon == null || onGround) continue;
+    for (const a of aircraft) {
+      const { hex, flight, lat, lon, alt_baro, gs, track, squawk } = a;
+      if (lat == null || lon == null || alt_baro === 'ground') continue;
 
-      const type = classifyAircraft(icao24, callsign);
+      const type = classifyAircraft(hex, flight);
       counts[type]++;
-      seen.add(icao24);
+      seen.add(hex);
 
-      const popup = buildPopup(icao24, callsign, country, baroAlt, velocity, heading, squawk, type);
-      const icon = makePlaneIcon(heading, type);
+      const popup = buildPopup(hex, flight, alt_baro, gs, track, squawk, type);
+      const icon  = makePlaneIcon(track, type);
 
-      if (planeMarkers.has(icao24)) {
-        const m = planeMarkers.get(icao24);
+      if (planeMarkers.has(hex)) {
+        const m = planeMarkers.get(hex);
         m.setLatLng([lat, lon]);
         m.setIcon(icon);
         if (m.isPopupOpen()) m.setPopupContent(popup);
         else m.bindPopup(popup);
       } else {
-        const m = L.marker([lat, lon], { icon }).bindPopup(popup).addTo(planeGroup);
-        planeMarkers.set(icao24, m);
+        planeMarkers.set(hex, L.marker([lat, lon], { icon }).bindPopup(popup).addTo(planeGroup));
       }
     }
 
-    // Remove planes no longer in view
-    for (const [icao, m] of planeMarkers) {
-      if (!seen.has(icao)) {
-        planeGroup.removeLayer(m);
-        planeMarkers.delete(icao);
-      }
+    for (const [hex, m] of planeMarkers) {
+      if (!seen.has(hex)) { planeGroup.removeLayer(m); planeMarkers.delete(hex); }
     }
 
     updateCounter(counts);
