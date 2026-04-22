@@ -414,25 +414,67 @@ function buildShipPopup(mmsi, name, typeCode, sog, heading, dest) {
 const shipGroup   = L.layerGroup().addTo(map);
 const shipMarkers = new Map();   // MMSI → Leaflet marker
 const shipMeta    = new Map();   // MMSI → { name, typeCode, dest }
-const shipCounts  = { military: 0, tanker: 0, cargo: 0, passenger: 0, fishing: 0, other: 0 };
-let   shipsEnabled = true;
+let   shipsEnabled = false;      // off until user explicitly enables
 let   shipWs       = null;
 let   shipApiKey   = localStorage.getItem('aisApiKey') || '';
+
+// Sync button to initial state
+document.getElementById('btn-ships').classList.toggle('active', false);
+
+function setShipStatus(msg) {
+  document.getElementById('ship-counter').innerHTML =
+    msg ? `<span style="color:#9aa0b8">${msg}</span>` : '';
+}
+
+function updateShipCounter() {
+  const counts = { military: 0, tanker: 0, cargo: 0, passenger: 0, fishing: 0, other: 0 };
+  for (const [mmsi] of shipMarkers) {
+    const meta = shipMeta.get(mmsi) || {};
+    counts[getShipType(meta.typeCode)]++;
+  }
+  if (!shipMarkers.size) { setShipStatus('waiting for ships…'); return; }
+  document.getElementById('ship-counter').innerHTML = `
+    <span style="color:${SHIP_COLOR.military}"  >&#9875; ${counts.military} mil</span>
+    <span style="color:${SHIP_COLOR.cargo}"     >&#9875; ${counts.cargo} cargo</span>
+    <span style="color:${SHIP_COLOR.tanker}"    >&#9875; ${counts.tanker} tanker</span>
+    <span style="color:${SHIP_COLOR.passenger}" >&#9875; ${counts.passenger} pass</span>
+    <span style="color:${SHIP_COLOR.fishing}"   >&#9875; ${counts.fishing} fish</span>
+  `;
+}
 
 // --- WebSocket ---
 function connectShips() {
   if (!shipApiKey) { showShipModal(); return; }
   if (shipWs) { shipWs.close(); shipWs = null; }
 
+  setShipStatus('connecting…');
   shipWs = new WebSocket('wss://stream.aisstream.io/v0/stream');
-  shipWs.onopen    = subscribeShips;
-  shipWs.onmessage = e => { try { handleAis(JSON.parse(e.data)); } catch {} };
-  shipWs.onerror   = () => console.warn('AIS WebSocket error');
-  shipWs.onclose   = e => {
-    if (e.code === 4001) {          // invalid API key
+
+  shipWs.onopen = () => {
+    console.log('[ships] WebSocket open, subscribing…');
+    setShipStatus('connected, waiting for ships…');
+    subscribeShips();
+  };
+
+  shipWs.onmessage = e => {
+    try { handleAis(JSON.parse(e.data)); }
+    catch (err) { console.warn('[ships] parse error', err); }
+  };
+
+  shipWs.onerror = err => console.warn('[ships] WebSocket error', err);
+
+  shipWs.onclose = e => {
+    console.log('[ships] WebSocket closed, code:', e.code, e.reason);
+    if (e.code === 4001 || e.code === 4003) {
+      // Invalid or expired API key
       shipApiKey = '';
       localStorage.removeItem('aisApiKey');
+      setShipStatus('invalid API key');
       showShipModal();
+    } else if (shipsEnabled) {
+      // Unexpected close — retry after 5 s
+      setShipStatus('reconnecting…');
+      setTimeout(connectShips, 5000);
     }
   };
 }
@@ -440,11 +482,13 @@ function connectShips() {
 function subscribeShips() {
   if (!shipWs || shipWs.readyState !== WebSocket.OPEN) return;
   const b = map.getBounds();
-  shipWs.send(JSON.stringify({
+  const payload = {
     APIKey: shipApiKey,
     BoundingBoxes: [[[b.getSouth(), b.getWest()], [b.getNorth(), b.getEast()]]],
     FilterMessageTypes: ['PositionReport', 'ShipStaticData', 'ExtendedClassBPositionReport'],
-  }));
+  };
+  console.log('[ships] subscribing bbox', payload.BoundingBoxes);
+  shipWs.send(JSON.stringify(payload));
 }
 
 function handleAis({ MessageType, MetaData, Message }) {
@@ -454,11 +498,12 @@ function handleAis({ MessageType, MetaData, Message }) {
   if (MessageType === 'ShipStaticData') {
     const s = Message.ShipStaticData;
     shipMeta.set(mmsi, {
-      name: s.Name?.trim() || MetaData.ShipName?.trim(),
+      name:     (s.Name?.trim() || MetaData.ShipName?.trim()) || undefined,
       typeCode: s.Type,
-      dest: s.Destination?.trim(),
+      dest:     s.Destination?.trim() || undefined,
     });
-    const m = shipMarkers.get(mmsi);
+    // Refresh icon/popup if marker already placed
+    const m = shipMeta.get(mmsi) && shipMarkers.get(mmsi);
     if (m) {
       const meta = shipMeta.get(mmsi);
       m.setIcon(makeShipIcon(null, getShipType(meta.typeCode)));
@@ -467,21 +512,19 @@ function handleAis({ MessageType, MetaData, Message }) {
     return;
   }
 
-  // PositionReport or ExtendedClassBPositionReport
-  const p   = Message.PositionReport ?? Message.ExtendedClassBPositionReport;
+  const p = Message.PositionReport ?? Message.ExtendedClassBPositionReport;
   if (!p) return;
-  const lat = p.Latitude, lon = p.Longitude;
+
+  const lat = p.Latitude ?? p.latitude;
+  const lon = p.Longitude ?? p.longitude;
   if (lat == null || lon == null || (lat === 0 && lon === 0)) return;
 
   const meta    = shipMeta.get(mmsi) || {};
   const name    = meta.name || MetaData.ShipName?.trim();
   const type    = getShipType(meta.typeCode);
-  const heading = p.TrueHeading ?? p.CourseOverGround;
-  const popup   = buildShipPopup(mmsi, name, meta.typeCode, p.Sog, heading, meta.dest);
+  const heading = (p.TrueHeading !== 511 ? p.TrueHeading : null) ?? p.Cog ?? p.CourseOverGround;
   const icon    = makeShipIcon(heading, type);
-
-  // Update counter when adding a new ship
-  if (!shipMarkers.has(mmsi)) shipCounts[type]++;
+  const popup   = buildShipPopup(mmsi, name, meta.typeCode, p.Sog, heading, meta.dest);
 
   if (shipMarkers.has(mmsi)) {
     const m = shipMarkers.get(mmsi);
@@ -496,19 +539,6 @@ function handleAis({ MessageType, MetaData, Message }) {
   updateShipCounter();
 }
 
-function updateShipCounter() {
-  const el = document.getElementById('ship-counter');
-  const total = shipMarkers.size;
-  if (!total) { el.innerHTML = ''; return; }
-  el.innerHTML = `
-    <span style="color:${SHIP_COLOR.military}"  >&#9875; ${shipCounts.military} mil</span>
-    <span style="color:${SHIP_COLOR.cargo}"     >&#9875; ${shipCounts.cargo} cargo</span>
-    <span style="color:${SHIP_COLOR.tanker}"    >&#9875; ${shipCounts.tanker} tanker</span>
-    <span style="color:${SHIP_COLOR.passenger}" >&#9875; ${shipCounts.passenger} pass</span>
-    <span style="color:${SHIP_COLOR.fishing}"   >&#9875; ${shipCounts.fishing} fish</span>
-  `;
-}
-
 // --- Modal ---
 function showShipModal() {
   document.getElementById('ship-apikey').value = shipApiKey;
@@ -520,6 +550,7 @@ document.getElementById('ship-key-cancel').addEventListener('click', () => {
   document.getElementById('ship-modal').classList.add('hidden');
   shipsEnabled = false;
   document.getElementById('btn-ships').classList.remove('active');
+  setShipStatus('');
 });
 
 document.getElementById('ship-key-save').addEventListener('click', () => {
@@ -545,14 +576,20 @@ document.getElementById('btn-ships').addEventListener('click', function () {
   } else {
     if (shipWs) { shipWs.close(); shipWs = null; }
     map.removeLayer(shipGroup);
-    document.getElementById('ship-counter').innerHTML = '';
+    shipMarkers.clear();
+    shipMeta.clear();
+    setShipStatus('');
   }
 });
 
-// Re-subscribe when map moves (updates bounding box filter)
+// Re-subscribe with updated bbox when map moves
 map.on('moveend', () => {
   if (shipsEnabled && shipWs?.readyState === WebSocket.OPEN) subscribeShips();
 });
 
-// Auto-connect on load if key is already saved
-if (shipApiKey) connectShips();
+// Auto-enable and connect if API key already stored
+if (shipApiKey) {
+  shipsEnabled = true;
+  document.getElementById('btn-ships').classList.add('active');
+  connectShips();
+}
