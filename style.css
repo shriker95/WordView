@@ -1,0 +1,85 @@
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  font-family: system-ui, sans-serif;
+  background: #0f1117;
+  color: #e0e0e0;
+}
+
+header {
+  height: 48px;
+  background: #1a1d27;
+  border-bottom: 1px solid #2e3147;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 16px;
+  z-index: 1000;
+  position: relative;
+}
+
+.logo {
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: #7c9cff;
+}
+
+.controls {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.layer-btn {
+  padding: 4px 12px;
+  border: 1px solid #2e3147;
+  border-radius: 4px;
+  background: transparent;
+  color: #9aa0b8;
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.layer-btn:hover {
+  background: #2e3147;
+  color: #e0e0e0;
+}
+
+.layer-btn.active {
+  background: #2a3060;
+  border-color: #7c9cff;
+  color: #7c9cff;
+}
+
+#map {
+  height: calc(100vh - 48px);
+  width: 100%;
+}
+
+/* Leaflet overrides */
+.leaflet-control-attribution {
+  background: rgba(26, 29, 39, 0.85) !important;
+  color: #666 !important;
+  font-size: 10px !important;
+}
+
+.leaflet-control-attribution a {
+  color: #7c9cff !important;
+}
+
+.leaflet-bar a {
+  background: #1a1d27 !important;
+  color: #e0e0e0 !important;
+  border-color: #2e3147 !important;
+}
+
+.leaflet-bar a:hover {
+  background: #2e3147 !important;
+}

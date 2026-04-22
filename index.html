@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WorldView</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <span class="logo">WorldView</span>
+    <div class="controls">
+      <button id="btn-osm" class="layer-btn active" data-layer="osm">Street</button>
+      <button id="btn-satellite" class="layer-btn" data-layer="satellite">Satellite</button>
+      <button id="btn-topo" class="layer-btn" data-layer="topo">Topo</button>
+    </div>
+  </header>
+  <div id="map"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
