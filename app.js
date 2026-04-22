@@ -133,8 +133,8 @@ async function refreshPlanes() {
     // Radius from center to corner in nautical miles, capped at 500
     const radiusNm = Math.min(500, Math.round(map.distance(center, corner) / 1852));
 
-    // adsb.lol — open CORS, no key needed, altitude in ft, speed in kts
-    const url = `https://api.adsb.lol/v2/lat/${center.lat.toFixed(4)}/lon/${center.lng.toFixed(4)}/dist/${radiusNm}`;
+    // Proxy through serve.py → adsb.lol (avoids CORS)
+    const url = `/api/v2/lat/${center.lat.toFixed(4)}/lon/${center.lng.toFixed(4)}/dist/${radiusNm}`;
     const res = await fetch(url);
     if (!res.ok) return;
     const { ac: aircraft = [] } = await res.json();
