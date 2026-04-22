@@ -456,9 +456,11 @@ function connectShips() {
     subscribeShips();
   };
 
-  shipWs.onmessage = e => {
-    try { handleAis(JSON.parse(e.data)); }
-    catch (err) { console.warn('[ships] parse error', err); }
+  shipWs.onmessage = async e => {
+    try {
+      const text = e.data instanceof Blob ? await e.data.text() : e.data;
+      handleAis(JSON.parse(text));
+    } catch (err) { console.warn('[ships] parse error', err); }
   };
 
   shipWs.onerror = err => console.warn('[ships] WebSocket error', err);
